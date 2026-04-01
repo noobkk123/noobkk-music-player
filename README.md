@@ -2,3 +2,9 @@ This is an MP3 music player I created with AI just for fun, but to have a page f
 
 
 now he has english and poruguess
+
+
+
+changlogs:
+update 1: launch
+update 2: update
