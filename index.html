@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Advanced Rhythm Player</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; color: #fff; font-family: sans-serif; display: flex; }
+        
+        /* Visualizador de Fundo */
+        canvas { position: absolute; top: 0; left: 0; z-index: -2; image-rendering: pixelated; }
+
+        /* Container do GIF */
+        #gif-container {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -70%);
+            width: 200px; height: 200px; z-index: -1; display: flex; align-items: center; justify-content: center;
+        }
+        #gif-display { max-width: 100%; max-height: 100%; border: 2px solid rgba(255,255,255,0.2); }
+
+        /* Barra Lateral de Músicas */
+        #playlist {
+            width: 250px; height: 100vh; background: rgba(0,0,0,0.8);
+            border-right: 1px solid #333; overflow-y: auto; padding: 10px; z-index: 10;
+        }
+        .track-item { 
+            padding: 8px; border-bottom: 1px solid #222; cursor: pointer; font-size: 13px; 
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .track-item:hover { background: #333; }
+
+        /* Controles Inferiores */
+        #controls {
+            position: absolute; bottom: 20px; right: 20px; width: 300px;
+            background: rgba(0,0,0,0.9); padding: 15px; border: 1px solid #444; border-radius: 10px;
+        }
+        .config-section { font-size: 11px; margin-bottom: 10px; border-bottom: 1px solid #222; padding-bottom: 5px; }
+        input[type="range"] { width: 100%; accent-color: #ff4444; }
+        button { width: 100%; padding: 10px; background: #000; color: #fff; border: 1px solid #fff; cursor: pointer; font-weight: bold; }
+        button:hover { background: #fff; color: #000; }
+        label { display: block; margin-top: 5px; cursor: pointer; color: #aaa; }
+        label:hover { color: #fff; }
+    </style>
+</head>
+<body>
+
+    <div id="playlist">
+        <div style="font-weight:bold; margin-bottom:10px; color:#ff4444;">BIBLIOTECA</div>
+        <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none">
+        <label for="folderInput" style="background:#222; padding:5px; text-align:center; border-radius:3px;">📂 SELECIONAR PASTA</label>
+        <div id="list-content"></div>
+    </div>
+
+    <div id="gif-container">
+        <img id="gif-display" src="" alt="Aguardando GIF...">
+    </div>
+
+    <canvas id="visualizer"></canvas>
+
+    <div id="controls">
+        <div class="config-section">
+            <span>CONFIGURAR GIF:</span>
+            <input type="file" id="gifAnimado" accept="image/gif" style="display:none">
+            <label for="gifAnimado">▶ Carregar GIF Animado</label>
+            
+            <input type="file" id="imgParada" accept="image/*" style="display:none">
+            <label for="imgParada">■ Carregar Imagem Parada</label>
+        </div>
+
+        <div style="margin-bottom:10px;">
+            <span style="font-size:12px;">VELOCIDADE: <span id="speedVal">1.0</span>x</span>
+            <input type="range" id="speedSlider" min="0.5" max="2.5" step="0.1" value="1.0">
+        </div>
+
+        <button id="playBtn">PLAY / PAUSE</button>
+    </div>
+
+    <audio id="audioPlayer"></audio>
+
+    <script>
+        const canvas = document.getElementById('visualizer');
+        const ctx = canvas.getContext('2d');
+        const audio = document.getElementById('audioPlayer');
+        const folderInput = document.getElementById('folderInput');
+        const listContent = document.getElementById('list-content');
+        const gifDisplay = document.getElementById('gif-display');
+        const playBtn = document.getElementById('playBtn');
+        const speedSlider = document.getElementById('speedSlider');
+        const speedVal = document.getElementById('speedVal');
+
+        let audioCtx, analyser, dataArray, source;
+        let gifURL = "", imgURL = "";
+        let particles = [];
+
+        // Setup inicial das partículas
+        for(let i=0; i<60; i++) particles.push({x: Math.random()*window.innerWidth, y: Math.random()*window.innerHeight, s: Math.random()*2+1, v: Math.random()*0.5+0.2});
+
+        window.onresize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+        window.onresize();
+
+        // Lógica de Pasta
+        folderInput.onchange = (e) => {
+            listContent.innerHTML = "";
+            const files = Array.from(e.target.files).filter(f => f.name.endsWith('.mp3'));
+            files.forEach(file => {
+                const item = document.createElement('div');
+                item.className = 'track-item';
+                item.innerText = file.name;
+                item.onclick = () => {
+                    audio.src = URL.createObjectURL(file);
+                    playMusic();
+                };
+                listContent.appendChild(item);
+            });
+        };
+
+        // Lógica de GIFs
+        document.getElementById('gifAnimado').onchange = (e) => gifURL = URL.createObjectURL(e.target.files[0]);
+        document.getElementById('imgParada').onchange = (e) => {
+            imgURL = URL.createObjectURL(e.target.files[0]);
+            gifDisplay.src = imgURL; // Começa parado
+        };
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioCtx.createAnalyser();
+                source = audioCtx.createMediaElementSource(audio);
+                source.connect(analyser);
+                analyser.connect(audioCtx.destination);
+                analyser.fftSize = 128;
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                draw();
+            }
+        }
+
+        function playMusic() {
+            initAudio();
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+            audio.play();
+            if(gifURL) gifDisplay.src = gifURL; // Troca para o animado
+            playBtn.innerText = "PAUSE";
+        }
+
+        playBtn.onclick = () => {
+            if(!audio.src) return;
+            initAudio();
+            if (audio.paused) {
+                audio.play();
+                if(gifURL) gifDisplay.src = gifURL;
+                playBtn.innerText = "PAUSE";
+            } else {
+                audio.pause();
+                if(imgURL) gifDisplay.src = imgURL; // Volta para o estático
+                playBtn.innerText = "PLAY";
+            }
+        };
+
+        speedSlider.oninput = function() {
+            const v = parseFloat(this.value);
+            audio.playbackRate = v;
+            speedVal.innerText = v.toFixed(1);
+            try { audio.preservesPitch = false; audio.webkitPreservesPitch = false; } catch(e){}
+        };
+
+        function draw() {
+            requestAnimationFrame(draw);
+            let pulse = 0;
+            if(analyser) {
+                analyser.getByteFrequencyData(dataArray);
+                pulse = dataArray[1] / 255;
+            }
+
+            // Fundo oscilante
+            let time = Date.now() * 0.001;
+            let osc = Math.sin(time) * 30;
+            let grd = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            grd.addColorStop(0, `rgb(${20 + pulse*60 + osc}, 0, ${40 - osc})`);
+            grd.addColorStop(1, "#000");
+            ctx.fillStyle = grd;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Partículas
+            ctx.fillStyle = "white";
+            particles.forEach(p => {
+                p.y -= p.v * (1 + pulse*6) * audio.playbackRate;
+                if(p.y < 0) { p.y = canvas.height; p.x = Math.random()*canvas.width; }
+                ctx.fillRect(p.x, p.y, p.s, p.s);
+            });
+        }
+    </script>
+</body>
+</html>
